@@ -74,7 +74,8 @@ class Peer {
     this.userId = null;
     this.room = null;
     this.actorNr = 0;
-    this.groups = new Set();
+    this.groups = new Set();      // interest groups (ChangeGroups)
+    this.allGroups = false;       // subscribed to every group (ChangeGroups with an empty add list)
     this.fragments = [];
     this.closed = false;
     this.pings = 0;
@@ -151,9 +152,14 @@ function handleOperation(peer, msg) {
       ]));
     case OP.JoinLobby: case OP.LeaveLobby: case OP.ChangeGroups:
       if (msg.code === OP.ChangeGroups) {
-        const rem = val(PC.Remove), add = val(PC.Add);
-        if (Array.isArray(rem)) rem.forEach((g) => peer.groups.delete(g)); else if (rem !== undefined) peer.groups.clear();
-        if (Array.isArray(add)) add.forEach((g) => peer.groups.add(g));
+        // Groups arrive as byte[] (a Buffer here). Photon semantics: absent = no change,
+        // empty = all groups (remove all / subscribe to every group), else the listed groups.
+        const list = (v) => (v === undefined || v === null ? null : [...v].map(Number));
+        const rem = list(val(PC.Remove)), add = list(val(PC.Add));
+        if (rem && rem.length === 0) { peer.groups.clear(); peer.allGroups = false; }
+        else if (rem) rem.forEach((g) => peer.groups.delete(g));
+        if (add && add.length === 0) peer.allGroups = true;
+        else if (add) add.forEach((g) => peer.groups.add(g));
       }
       return peer.respond(msg.code, 0);
     case OP.FindFriends: case OP.GetLobbyStats: case OP.WebRpc: case OP.ServerSettings: case OP.GetGameList:
@@ -297,7 +303,7 @@ function raiseEvent(peer, msg) {
     else targets = room.others(peer.actorNr);
   }
   const interest = p.has(PC.Group) ? Number(p.get(PC.Group).value) : 0;
-  if (interest) targets = targets.filter((t) => t.groups.has(interest));
+  if (interest) targets = targets.filter((t) => t.allGroups || t.groups.has(interest));
   for (const t of targets) t.event(code, evParams);
 }
 
@@ -368,8 +374,14 @@ function handleInternal(peer, msg) {
 for (const [role, port] of Object.entries(PORTS)) {
   const srv = http.createServer((req, res) => { res.writeHead(426); res.end("Photon WebSocket endpoint"); });
   srv.on("upgrade", (req, socket) => {
-    wsAccept(req, socket);
-    const peer = new Peer(role, socket, req);
+    let peer;
+    try {
+      peer = new Peer(role, socket, req);
+      wsAccept(req, socket);
+    } catch (e) {
+      log(`${role}: rejected connection ${req.url}: ${e.message}`);
+      return socket.destroy();
+    }
     log(`${peer.tag()} connected ${req.url} (${req.headers["sec-websocket-protocol"]})`);
     let pending = Buffer.alloc(0);
     socket.on("data", (chunk) => {

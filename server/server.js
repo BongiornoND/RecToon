@@ -12,6 +12,22 @@ const TLS = {
   cert: fs.readFileSync(path.join(__dirname, "certs", "localhost.crt")),
 };
 const LOG = path.join(__dirname, "requests.jsonl");
+// The request log rolls over to requests.1.jsonl (replacing the previous one) at this size.
+const LOG_MAX_BYTES = 50 * 1024 * 1024;
+let logBytes = fs.existsSync(LOG) ? fs.statSync(LOG).size : 0;
+function logRequest(entry) {
+  const line = JSON.stringify(entry) + "\n";
+  try {
+    if (logBytes + Buffer.byteLength(line) > LOG_MAX_BYTES) {
+      logBytes = 0;
+      fs.renameSync(LOG, LOG.replace(/\.jsonl$/, ".1.jsonl"));
+    }
+    fs.appendFileSync(LOG, line);
+    logBytes += Buffer.byteLength(line);
+  } catch (e) {
+    console.log(`  request log: ${e.message}`);
+  }
+}
 
 // Every RecNet service is served by this one process under its own path prefix,
 // so the request log shows which service the client thinks it's talking to.
@@ -203,7 +219,12 @@ const routes = {
 
   // Chat threads (none yet).
   "GET /chat/thread": () => ({ status: 200, json: [] }),
-  "POST /matchmaking/player/logout": () => ({ status: 200, json: null }),
+  // Quitting: take the player out of their room so they stop counting toward its capacity.
+  "POST /matchmaking/player/logout": (req) => {
+    const account = authedAccount(req);
+    if (account) currentInstance.delete(account.accountId);
+    return { status: 200, json: null };
+  },
 
   // Friends / relationships, saved per account in data/relationships.json.
   "GET /api/api/relationships/v2/get": (req) => {
@@ -721,17 +742,26 @@ for (const method of ["set", "delete"]) {
   currentInstance[method] = (...args) => { const r = original(...args); savePresence(); return r; };
 }
 
+// When each account last made an authenticated request (heartbeats included). A game that
+// crashed or was closed without logging out leaves its presence behind; once it has been
+// silent this long it no longer counts toward a room's players or keeps it "in progress".
+const PRESENCE_TIMEOUT_MS = 5 * 60 * 1000;
+const lastSeen = new Map([...currentInstance.keys()].map((id) => [id, Date.now()]));  // grace period after a restart
+const isActive = (accountId) => Date.now() - (lastSeen.get(accountId) || 0) < PRESENCE_TIMEOUT_MS;
+const playersIn = (instanceId) =>
+  [...currentInstance].filter(([id, inst]) => inst.RoomInstanceId === instanceId && isActive(id)).map(([, inst]) => inst);
+
 // Public instances of a (room, sub-room): everyone going there lands together in the first one
 // that isn't full or already running a game/quest; instance n has id subRoomId + n * 1e6.
 function publicInstance(room, subRoom, instanceId) {
   if (instanceId === undefined) {
     for (let n = 0; ; n++) {
       const id = subRoom.SubRoomId + n * 1e6;
-      const live = [...currentInstance.values()].filter((i) => i.RoomInstanceId === id);
+      const live = playersIn(id);
       if (live.length < subRoom.MaxPlayers && !live.some((i) => i.IsInProgress)) { instanceId = id; break; }
     }
   }
-  const players = [...currentInstance.values()].filter((i) => i.RoomInstanceId === instanceId).length;
+  const players = playersIn(instanceId).length;
   return {
     RoomInstanceId: instanceId, RoomId: room.RoomId, SubRoomId: subRoom.SubRoomId,
     RoomInstanceType: 0, Location: subRoom.UnitySceneId, Name: `^${room.Name}`,
@@ -858,7 +888,9 @@ function verifyToken(token) {
 }
 function authedAccount(req) {
   const claims = verifyToken((req.headers.authorization || "").replace(/^Bearer\s+/i, ""));
-  return claims && accounts.find((a) => a.accountId === Number(claims.sub));
+  const account = claims && accounts.find((a) => a.accountId === Number(claims.sub));
+  if (account) lastSeen.set(account.accountId, Date.now());
+  return account;
 }
 function issueTokens(account) {
   const now = Math.floor(Date.now() / 1000);
@@ -902,28 +934,35 @@ const server = https.createServer(TLS, (req, res) => {
   req.on("data", (c) => chunks.push(c));
   req.on("end", () => {
     const body = Buffer.concat(chunks).toString("utf8");
-    const url = new URL(req.url, BASE);
-    const key = `${req.method} ${url.pathname}`;
     let result = { status: 404, json: null };
-    if (routes[key]) {
-      result = routes[key](req, body, url);
-    } else {
-      for (const [method, re, handler] of patternRoutes) {
-        const m = (method instanceof RegExp ? method.test(req.method) : req.method === method) && url.pathname.match(re);
-        if (m) { result = handler(m, req, body, url); break; }
+    // A handler that throws answers 500 instead of taking the server down for everyone.
+    try {
+      const url = new URL(req.url, BASE);
+      const key = `${req.method} ${url.pathname}`;
+      if (routes[key]) {
+        result = routes[key](req, body, url);
+      } else {
+        for (const [method, re, handler] of patternRoutes) {
+          const m = (method instanceof RegExp ? method.test(req.method) : req.method === method) && url.pathname.match(re);
+          if (m) { result = handler(m, req, body, url); break; }
+        }
       }
+    } catch (e) {
+      console.log(`  error handling ${req.method} ${req.url}: ${e.stack}`);
+      result = { status: 500, json: null };
     }
 
-    const entry = {
+    // Tokens are left out of the logs so a log file can be shared safely.
+    const loggedBody = body.replace(/(refresh_token=)[^&]+/, "$1(redacted)");
+    logRequest({
       t: new Date().toISOString(),
       method: req.method,
       url: req.url,
-      headers: req.headers,
-      body,
+      headers: { ...req.headers, authorization: req.headers.authorization && "(redacted)" },
+      body: loggedBody,
       status: result.status,
-    };
-    fs.appendFileSync(LOG, JSON.stringify(entry) + "\n");
-    console.log(`${result.status} ${req.method} ${req.url}${body ? "  body=" + body.slice(0, 200) : ""}`);
+    });
+    console.log(`${result.status} ${req.method} ${req.url}${body ? "  body=" + loggedBody.slice(0, 200) : ""}`);
 
     if (result.raw !== undefined) {
       res.writeHead(result.status, { "Content-Type": "text/plain" });
@@ -967,9 +1006,10 @@ function wsParse(buf) {
 }
 
 server.on("upgrade", (req, socket) => {
-  const url = new URL(req.url, BASE);
-  console.log(`WS ${url.pathname}`);
-  if (url.pathname !== "/notifications/hub/v1") return socket.destroy();
+  let pathname = null;
+  try { pathname = new URL(req.url, BASE).pathname; } catch {}
+  console.log(`WS ${pathname}`);
+  if (pathname !== "/notifications/hub/v1") return socket.destroy();
   const accept = crypto.createHash("sha1")
     .update(req.headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
   socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
@@ -989,8 +1029,10 @@ server.on("upgrade", (req, socket) => {
       if (opcode === 0x8) { socket.end(); return; }          // close
       if (opcode === 0x9) continue;                         // ping (client pings are rare)
       for (const record of data.toString("utf8").split(RS).filter(Boolean)) {
-        const msg = JSON.parse(record);
         console.log(`  hub <- ${record.slice(0, 200)}`);
+        let msg;
+        try { msg = JSON.parse(record); } catch { console.log("  hub: ignoring malformed message"); continue; }
+        if (!msg || typeof msg !== "object") continue;
         if (msg.protocol) wsSend(socket, "{}" + RS);         // handshake ack
         else if (msg.type === 1 && msg.invocationId) {       // invocation needing a completion
           wsSend(socket, JSON.stringify({ type: 3, invocationId: msg.invocationId, result: null }) + RS);

@@ -4,7 +4,8 @@ Always starts from the pristine copy so it is safe to re-run. Each patch checks
 the original bytes first, so it fails loudly if pointed at a different build.
 Addresses come from analysis/dump/dump.cs (file "Offset" column).
 
-Usage: python -I patch_code.py <original build folder> <work build folder>
+Usage: python -I patch_code.py <original build folder> <work build folder> [--diagnostic]
+       --diagnostic also applies DIAGNOSTIC_PATCHES (for debugging; players see raw errors)
 """
 import sys
 from pathlib import Path
@@ -42,18 +43,24 @@ PATCHES = [
     # isn't an EnetPeer and room load throws; TCP has none pending -> xor eax,eax; ret
     ("no pending reliable commands (WebSocket peer)", 0x559C430,
      bytes.fromhex("48 89 5c 24 08 57 48 83"), bytes.fromhex("31 c0 c3")),
-    # DIAGNOSTIC: FBINGFGLKGB.HIMGEMADDLB(Exception) normally hides unknown room-load
-    # errors as "Unknown error loading room"; return exception.ToString() (type, message,
-    # stack trace) instead. mov rcx,rdx; xor edx,edx; jmp System.Exception::ToString()
+]
+
+# Only with --diagnostic.
+DIAGNOSTIC_PATCHES = [
+    # FBINGFGLKGB.HIMGEMADDLB(Exception) normally hides unknown room-load errors as
+    # "Unknown error loading room"; return exception.ToString() (type, message, stack
+    # trace) instead. mov rcx,rdx; xor edx,edx; jmp System.Exception::ToString()
     ("show room-load exception details", 0x64002B0,
      bytes.fromhex("48 89 5c 24 18 57 48 83"),
      bytes.fromhex("48 89 d1 31 d2 e9") + (0x52D04C0 - (0x64016B0 + 10)).to_bytes(4, "little", signed=True)),
 ]
 
-original, work = Path(sys.argv[1]), Path(sys.argv[2])
+args = [a for a in sys.argv[1:] if a != "--diagnostic"]
+original, work = Path(args[0]), Path(args[1])
+patches = PATCHES + (DIAGNOSTIC_PATCHES if "--diagnostic" in sys.argv[1:] else [])
 data = bytearray((original / "GameAssembly.dll").read_bytes())
 
-for name, offset, expect, new in PATCHES:
+for name, offset, expect, new in patches:
     actual = bytes(data[offset:offset + len(expect)])
     assert actual == expect, f"{name}: unexpected bytes {actual.hex(' ')} at {offset:#x}"
     data[offset:offset + len(new)] = new

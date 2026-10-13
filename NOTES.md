@@ -4,9 +4,11 @@ Build: app 471710, depot 471711, manifest 9010071090979861071 (client version 20
 Unity 2021.3.29f1, IL2CPP (metadata v29), BestHTTP (BouncyCastle TLS), Utf8Json, Photon PUN 2 + Voice.
 
 ## How to run
-1. `node --watch server/server.js` (HTTPS on 9443, logs to `server/requests.jsonl`)
-2. `powershell tools/launch.ps1` (starts `work/RecRoom.exe` desktop mode, log in `logs/`)
-3. `tools/play_test.ps1` presses PLAY and shows failing requests; `tools/screenshot.ps1` / `tools/click.ps1` drive the window.
+1. `node --watch server/server.js` (HTTPS on 9443, logs to `server/requests.jsonl`, rolled over to
+   `requests.1.jsonl` at 50 MB; tokens are redacted)
+2. `node photon/server.js` (Photon over WebSocket on 9093/9090/9091; `PHOTON_VERBOSE=1` logs every op)
+3. `powershell tools/launch.ps1` (starts `work/RecRoom.exe` desktop mode, log in `logs/`)
+4. `tools/play_test.ps1` presses PLAY and shows failing requests; `tools/screenshot.ps1` / `tools/click.ps1` drive the window.
 
 Rebuilding `work/` from `original/`: run `tools/patch_hosts.py`, `tools/patch_code.py`,
 `tools/patch_privacy.py` (each takes `<original> <work>`).
@@ -26,6 +28,11 @@ Rebuilding `work/` from `original/`: run `tools/patch_hosts.py`, `tools/patch_co
   - BestHTTP cert verifier `CBGDHMKNIMI.GIPJGEOHBCA.IsValid` -> true
   - `EACManager.GenerateChallengeResponse` -> echo challenge (EAC not running)
   - File integrity check init `IKLPFGACPII.JMCKLNABHHJ` -> ret (needs CDN signature; quits game)
+  - UnityTls `VerifyCallback` (both overloads) -> success, for .NET HttpClient/WebRequest traffic
+  - Photon `AppSettings` ctor: Protocol = WebSocket, protocol fallback off
+  - `BEBJGBOPJEM.CCELHOLFBPP` (pending reliable commands, EnetPeer-only) -> 0
+  - `--diagnostic` only: room-load errors show `exception.ToString()` instead of
+    "Unknown error loading room"
 - Privacy (patch_privacy.py): Unity cloud hosts in globalgamemanagers -> `.unity3d.inv`;
   Firebase config renamed. Verified: no external TCP connections from the game.
 - Launch `RecRoom.exe` directly; `Recroom_Release.exe` is the EAC launcher.
@@ -49,9 +56,10 @@ JSON reader quirks: an object with no recognised fields deserializes to null; ty
 - Login (cached login, EAC, OAuth token + signing key, account/me): done, no passwords
 - Post-login (avatar/outfit, settings, presence, friends, chat, hub WebSocket, ConfigSettings): done
 - PLAY -> matchmake/dorm -> room data for the dorm (scene 76d98498-..., DORM_ROOM): accepted
-- **Blocker:** joining the room session needs Photon. Fails with "Unknown error loading room
-  (Code 8700)" in SessionManager after room data loads. Options: self-hosted Photon Server,
-  or patch the client into Photon offline mode for single-player rooms.
+- Room sessions: done with the self-hosted Photon server (`photon/`), client patched to Photon
+  over WebSocket (see Rooms below for what's verified).
+- Presence: logout clears a player's room; a player silent for 5 minutes (no authenticated
+  request, heartbeats included) stops counting toward an instance's capacity / in-progress state.
 
 ## Built-in scenes (resources.assets, AGRoomRuntimeConfig)
 Dorm Room 76d98498-60a1-430c-ab76-b54a29b7a163, Rec Center cbad71af-0831-44d8-b8ef-69edafa841f6,

@@ -16,7 +16,7 @@ __pycache__/
 # Local server state: accounts (Steam IDs), token signing secret, TLS key, request log
 /server/data/
 /server/certs/
-/server/requests.jsonl
+/server/requests*.jsonl
 
 # Logs and per-PC launcher state
 /logs/
