@@ -22,6 +22,7 @@ namespace RecRoomLauncher
                 if (args.Length == 2 && args[0] == "render") return Render(args[1]);
                 if (args.Length == 2 && args[0] == "render-main") return RenderMain(args[1]);
                 if (args.Length == 3 && args[0] == "pipeline") return Pipeline(args[1], args[2]);
+                if (args.Length == 1 && args[0] == "release-download") return ReleaseDownload();
                 if (args.Length >= 3 && args[0] == "server-install") return ServerInstall(args[1], args[2], args.Skip(3).ToArray());
                 Console.WriteLine("usage: render <dir> | pipeline <source> <dest>");
                 return 2;
@@ -175,6 +176,27 @@ namespace RecRoomLauncher
             Console.WriteLine("validate: " + (ServerSetup.ValidateServerFolder(server) ?? "ok") + "; node: " + ServerSetup.NodeFor(server));
             Console.WriteLine("cert: " + File.ReadAllLines(Path.Combine(server, "certs", "localhost.crt"))[0] + " key: " + File.ReadAllLines(Path.Combine(server, "certs", "localhost.key"))[0]);
             // Tamper test: a damaged package must be refused.
+            return 0;
+        }
+
+        // release-download: fetch the core package from the live GitHub release with the launcher's downloader.
+        private static int ReleaseDownload()
+        {
+            Console.WriteLine("release " + ServerRelease.Tag + " from " + ServerRelease.BaseUrl);
+            Console.WriteLine("groups: " + String.Join(", ", ServerRelease.Groups().Select(g => g.Id + " x" + g.ExpectedParts + " complete=" + g.Complete)));
+            var last = DateTime.MinValue;
+            var progress = new SyncProgress(p => {
+                if ((DateTime.UtcNow - last).TotalSeconds < 5 && p.Done < p.Total) return;
+                last = DateTime.UtcNow;
+                Console.WriteLine("  " + p.Stage + " " + (int)(p.Fraction * 100) + "% " + p.Detail);
+            });
+            var started = DateTime.UtcNow;
+            var files = ServerRelease.Download(new[] { ServerRelease.Core }, progress, CancellationToken.None);
+            Console.WriteLine("downloaded and verified " + files[0] + " in " + (DateTime.UtcNow - started).TotalSeconds.ToString("0") + "s");
+            var package = ServerSetup.ReadPackage(files[0]);
+            Console.WriteLine("package " + package.Id + " " + package.Version + " files " + package.Files.Count);
+            ServerRelease.DeleteDownloads();
+            Console.WriteLine("cleaned: " + !Directory.Exists(ServerRelease.DownloadFolder));
             return 0;
         }
 
