@@ -1,0 +1,4 @@
+# Shipped byte-for-byte; never convert line endings.
+launcher/patch/** -text
+launcher/assets/*.manifest -text
+launcher/server-packages.json -text
