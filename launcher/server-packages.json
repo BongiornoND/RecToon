@@ -1,0 +1,137 @@
+{
+ "version": "2026.10.16",
+ "packages": [
+  {
+   "id": "core",
+   "group": "core",
+   "file": "RecToon-Server-2026.10.16-core.zip",
+   "title": "RecToon server core",
+   "description": "Server code, room list and settings. Required.",
+   "bytes": 106565835,
+   "installedBytes": 108279731,
+   "files": 57,
+   "sha256": "81d614253c701c68a3b4d5edc47b16c6c3f94845487b1ba6e4b87aa2defd4c51"
+  },
+  {
+   "id": "community-rooms",
+   "group": "community-rooms",
+   "file": "RecToon-Server-2026.10.16-community-rooms.zip",
+   "title": "Community rooms",
+   "description": "Make It to Midnight, My Little Monsters, Run the Block and Showdown, with their shared room data and inventory items.",
+   "bytes": 850062880,
+   "installedBytes": 850133372,
+   "files": 40,
+   "sha256": "aa0567c948343055f610f063a07edb7324c9905929c322f89cf5f987aad955ff"
+  },
+  {
+   "id": "clothing-1",
+   "group": "clothing",
+   "file": "RecToon-Server-2026.10.16-clothing-1.zip",
+   "title": "Clothing library (part 1 of 9)",
+   "description": "Thousands of archived avatar items with their store pictures. Large download.",
+   "bytes": 1890828425,
+   "installedBytes": 1899282593,
+   "files": 857,
+   "sha256": "92c6f0823cf527f5d8f50822897a842682588072d950749b616d04e7c43c8870"
+  },
+  {
+   "id": "clothing-2",
+   "group": "clothing",
+   "file": "RecToon-Server-2026.10.16-clothing-2.zip",
+   "title": "Clothing library (part 2 of 9)",
+   "description": "Thousands of archived avatar items with their store pictures. Large download.",
+   "bytes": 1896768319,
+   "installedBytes": 1896498975,
+   "files": 850,
+   "sha256": "087221631698c66adaf8ce52600e0f9e9a4bfbf0d8367f74f49749d8a37ab56b"
+  },
+  {
+   "id": "clothing-3",
+   "group": "clothing",
+   "file": "RecToon-Server-2026.10.16-clothing-3.zip",
+   "title": "Clothing library (part 3 of 9)",
+   "description": "Thousands of archived avatar items with their store pictures. Large download.",
+   "bytes": 1899055038,
+   "installedBytes": 1898817982,
+   "files": 747,
+   "sha256": "4840b9ca5db129e243e0daa1fbe80f3fb22198b51597ed633952a786d45d56b8"
+  },
+  {
+   "id": "clothing-4",
+   "group": "clothing",
+   "file": "RecToon-Server-2026.10.16-clothing-4.zip",
+   "title": "Clothing library (part 4 of 9)",
+   "description": "Thousands of archived avatar items with their store pictures. Large download.",
+   "bytes": 1898623143,
+   "installedBytes": 1898393520,
+   "files": 724,
+   "sha256": "6e00ea4c04f573c9aced122ddc394b9cc13f5971e23081c655b4f0e5bd5cd62b"
+  },
+  {
+   "id": "clothing-5",
+   "group": "clothing",
+   "file": "RecToon-Server-2026.10.16-clothing-5.zip",
+   "title": "Clothing library (part 5 of 9)",
+   "description": "Thousands of archived avatar items with their store pictures. Large download.",
+   "bytes": 1899414757,
+   "installedBytes": 1899186332,
+   "files": 720,
+   "sha256": "3911a196704ed4509f17ac96ede1c35913a5d8b86473819f648029b0a0b07305"
+  },
+  {
+   "id": "clothing-6",
+   "group": "clothing",
+   "file": "RecToon-Server-2026.10.16-clothing-6.zip",
+   "title": "Clothing library (part 6 of 9)",
+   "description": "Thousands of archived avatar items with their store pictures. Large download.",
+   "bytes": 1900148099,
+   "installedBytes": 1899885039,
+   "files": 815,
+   "sha256": "5923ec738e9e3673e4b649932fe5ae44cbe7993a2f0e66bd38869ec861380a86"
+  },
+  {
+   "id": "clothing-7",
+   "group": "clothing",
+   "file": "RecToon-Server-2026.10.16-clothing-7.zip",
+   "title": "Clothing library (part 7 of 9)",
+   "description": "Thousands of archived avatar items with their store pictures. Large download.",
+   "bytes": 1898694335,
+   "installedBytes": 1898454476,
+   "files": 753,
+   "sha256": "4b84eca232c8b5752bd2d5c8e5a52b63b169fa6f94379555272978f2bf4c7981"
+  },
+  {
+   "id": "clothing-8",
+   "group": "clothing",
+   "file": "RecToon-Server-2026.10.16-clothing-8.zip",
+   "title": "Clothing library (part 8 of 9)",
+   "description": "Thousands of archived avatar items with their store pictures. Large download.",
+   "bytes": 1900434285,
+   "installedBytes": 1899854180,
+   "files": 1783,
+   "sha256": "ff9698e5af8a74a0ba365c805552b45260fa6724242d79190b4ee1a341fbd2eb"
+  },
+  {
+   "id": "clothing-9",
+   "group": "clothing",
+   "file": "RecToon-Server-2026.10.16-clothing-9.zip",
+   "title": "Clothing library (part 9 of 9)",
+   "description": "Thousands of archived avatar items with their store pictures. Large download.",
+   "bytes": 1725896735,
+   "installedBytes": 1725621047,
+   "files": 1099,
+   "sha256": "86a84619af7879f10534ccf2348d8d55f87dab7a1c21f6f31cc5fd1e6b55ff5e"
+  },
+  {
+   "id": "archive",
+   "group": "archive",
+   "file": "RecToon-Server-2026.10.16-archive.zip",
+   "title": "Archived Addressables",
+   "description": "Archived Rec Room asset catalog (Dec 2025) served from the local CDN.",
+   "bytes": 864877657,
+   "installedBytes": 867362380,
+   "files": 3056,
+   "sha256": "858b53407841e855d898fa7eabbca65555b703dffce06f290eb37227a9b4deed"
+  }
+ ]
+}

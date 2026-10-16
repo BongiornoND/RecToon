@@ -1,0 +1,25 @@
+# Rec Room game files (build 20231207). Not redistributable: download them from Steam (see README).
+/original/
+/work/
+/launcher/global-metadata.pristine.dat
+
+# Derived from the game build: decompiled metadata, symbol index, extracted art and item data
+/analysis/
+/branding/
+/launcher/assets/
+
+# Third-party tools and environments (install separately)
+/tools/Il2CppDumper/
+/.venv/
+__pycache__/
+
+# Local server state: accounts (Steam IDs), token signing secret, TLS key, request log
+/server/data/
+/server/certs/
+/server/requests*.jsonl
+
+# Logs and per-PC launcher state
+/logs/
+/launcher/settings.json
+/launcher/server.pids
+Recroom_Release_Data/

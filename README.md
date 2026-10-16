@@ -1,81 +1,96 @@
-# Rec Room offline (build 20231207)
+# RecToon
 
-Rec Room's servers shut down on 2026-06-01. This project keeps the December 2023 PC build playable:
-a local replacement for RecNet (the REST/SignalR backend), a self-hosted Photon server for rooms and
-voice, client patches that point the game at them, and a launcher to host a game or join a friend.
+Play the archived **Rec Room 20260323.14** client again, on a server you host yourself.
 
-What works: login without passwords (accounts are local, you pick your username), the full avatar
-catalog unlocked with outfits saved, your dorm, and the Rec Room Originals (Rec Center, Paintball,
-Laser Tag, quests, ...) with other players over LAN or a VPN such as Tailscale.
+RecToon is a Windows launcher with a built-in installer. From one EXE it:
 
-**No game files are included.** You need your own copy of the build from Steam.
+1. downloads the exact supported Rec Room build through **your own Steam client**,
+2. checks every game file and applies the community patch,
+3. downloads and installs the **RecToon server** (with Node.js, community rooms and the
+   archived clothing library) from this repository's release, and
+4. starts the server and the game for you.
 
-## Setup
+> Not affiliated with, endorsed by, or supported by Rec Room Inc. Rec Room's official
+> services are retired; this project exists for preservation. The server packages contain
+> archived Rec Room and community-creator content.
 
-1. **Download the build.** In the Steam console (`steam://open/console`):
+## Requirements
+
+- Windows 10 or 11 (64-bit)
+- [Steam](https://store.steampowered.com/), signed in, with Rec Room in your library (it is free)
+- About **50 GB** free disk space (game 6.3 GB, server ~19 GB, plus room for downloads while
+  installing; the downloaded packages are deleted afterwards)
+- An internet connection for the first setup
+
+## Install and play
+
+1. Download **`RecToon-Launcher.exe`** from the [latest release](../../releases/latest) and run it.
+2. **Step 1 – Rec Room.** Choose an install folder (the default is fine) and keep
+   *Download with Steam* selected. Click **Open Steam console**: Steam opens its console and
+   the command is copied for you. In Steam's console, type or paste
 
    ```
-   download_depot 471710 471711 9010071090979861071
+   download_depot 471710 471711 8867414017562658247
    ```
 
-   Copy the downloaded files into `original/`, then check them:
+   and press Enter. Keep Steam open; setup continues by itself when the download finishes.
+   (If the console does not open, paste `steam://open/console` into your browser's address bar.)
+3. **Step 2 – Install and patch.** Every file is checked against Steam's list for this build,
+   then the patch is installed. If Windows asks, allow the *Referee* component (Steam normally
+   installs it with the game).
+4. **Step 3 – Server.** Keep *Install the RecToon server* selected with *Download from the
+   RecToon release*, leave all content ticked and click **Finish setup**.
+   **You cannot play without a server** – only skip this if you have the address of someone
+   else's running RecToon server.
+5. In the launcher, click **Start server**, wait for it to come online, then **Start game & join**.
+   The first time, Windows asks for administrator access once to add `cdn.localhost` (the local
+   clothing download address).
 
-   ```bash
-   cd original && sha256sum -c ../original.sha256
-   ```
+Steam must be running and signed in whenever you play.
 
-2. **Make the patched copy** (`work/` is what the launcher runs):
+## What is in a release
 
-   ```bash
-   cp -r original work
-   python -I tools/patch_code.py original work
-   python -I tools/patch_privacy.py original work
-   python -I tools/patch_hosts.py original work localhost
-   ```
-
-3. **Server data** (generated from your copy of the build):
-
-   ```bash
-   mkdir -p server/data server/certs
-   python -I tools/extract_avatar_items.py original/RecRoom_Data/resources.assets server/data/avatar_catalog.json
-   python -I tools/extract_rooms.py original/RecRoom_Data/resources.assets server/data/builtin_rooms.json
-   openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj /CN=localhost \
-     -keyout server/certs/localhost.key -out server/certs/localhost.crt
-   ```
-
-   The certificate is only for the local HTTPS server; the patched client accepts it without it being
-   installed anywhere.
-
-4. **Launcher art and metadata (optional).** The launcher looks for `launcher/assets/hero.jpg`,
-   `logo.png` and `icon.ico` (Steam library art and the game icon) and falls back to plain colours
-   without them. Copying `original/RecRoom_Data/il2cpp_data/Metadata/global-metadata.dat` to
-   `launcher/global-metadata.pristine.dat` lets a join-only copy work without `original/`.
-
-## Playing
-
-Double-click **Rec Room Launcher.cmd**.
-
-- **Host & Play** starts the servers on this PC (needs [Node.js](https://nodejs.org)) and launches the
-  game. The launcher shows the addresses friends can use. Windows asks whether to let Node.js on the
-  network the first time: allow it so others can join.
-- **Join & Play** checks the host is reachable, points the game at the host's address and launches it.
-  Joining needs only Windows and Steam.
-
-Same network: use the host's LAN address. Over the internet: put both PCs on the same
-[Tailscale](https://tailscale.com) (or ZeroTier/Radmin) network and use that address. Every player
-needs Steam running; each Steam account gets its own local account on the host.
-
-## Layout
-
-| Path | What |
+| Asset | Purpose |
 | --- | --- |
-| `server/server.js` | RecNet replacement: name server, auth, accounts, avatars, rooms, matchmaking, SignalR hub (HTTPS on 9443) |
-| `photon/` | Photon LoadBalancing server over WebSocket (name server 9093, master 9090, game 9091), Protocol16/18, encryption |
-| `launcher/` | Host/Join launcher (`Launcher.ps1`) and the host patcher (`MetaPatcher.cs`) |
-| `tools/patch_*.py` | Client patches: server addresses, code patches (TLS, EAC, integrity), privacy (no outside connections) |
-| `tools/extract_*.py` | Pull the avatar catalog and built-in rooms out of `resources.assets` |
-| `tools/xref.js`, `disasm.py`, `build_index.py`, `fix_metadata.py` | Reverse-engineering helpers (need `analysis/` from Il2CppDumper) |
-| `tools/*.ps1` | Launch, screenshot, click and key helpers used while testing |
-| `NOTES.md` | Technical notes: client patches, protocols, DTO shapes, findings |
+| `RecToon-Launcher.exe` | Launcher + installer. Contains the patch and the checksums of everything it downloads. |
+| `RecToon-Server-<version>-core.zip` | Server code, settings, room list and Node.js runtime (required). |
+| `…-community-rooms.zip` | Make It to Midnight, My Little Monsters, Run the Block, Showdown. |
+| `…-clothing-1.zip` … `…-clothing-N.zip` | The archived clothing library, split into parts under GitHub's 2 GB limit (installed together). |
+| `…-archive.zip` | Archived Rec Room asset catalog served by the local CDN. |
+| `RecToon-Server-<version>-packages.json` | Sizes and SHA-256 checksums of the packages. |
 
-Rec Room is a trademark of Rec Room Inc. This is an unofficial, non-commercial preservation project.
+You normally only download the launcher; it fetches the packages itself. To install offline,
+put the package ZIPs in a `server-packages` folder next to the launcher and choose
+*Use server package files already on this PC*.
+
+Every package lists each file's SHA-256, and setup checks them while unpacking. Packages never
+contain accounts, saves, logs, certificates or keys: setup creates a new HTTPS certificate for
+your PC and the server creates its own secrets on first start.
+
+## Building from source
+
+The launcher is a single .NET Framework 4.x WinForms app compiled with the C# compiler that
+ships with Windows:
+
+```
+cd launcher
+powershell -ExecutionPolicy Bypass -File build.ps1 -OutFile ..\dist\RecToon-Launcher.exe
+```
+
+See [`launcher/README.md`](launcher/README.md) for the setup flow, the embedded game-file
+manifest (`tools/make_build_manifest.py`) and server packaging (`tools/package_server.py`).
+
+## Credits and licenses
+
+- Rec Room 2026 patch (`launcher/patch/`) by **dukedotdev**, MIT License – see
+  [`licenses/patch-2026-MIT.txt`](licenses/patch-2026-MIT.txt).
+- Node.js runtime bundled in the server core package – MIT and third-party licenses in
+  `runtime/LICENSE.txt` inside that package.
+- Rec Room is a trademark of Rec Room Inc. Game files are downloaded from Steam by your own
+  Steam client and are not redistributed here.
+
+## Rec Room 2023 build (older project)
+
+The earlier preservation project for the **December 2023** PC build (client 20231207) — a
+PowerShell launcher, local RecNet server, Photon server and client patch scripts — now lives in
+[`2023/`](2023/README.md). It is independent of the 2026 launcher above.
