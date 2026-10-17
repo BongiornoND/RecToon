@@ -108,6 +108,28 @@ core package bundles Node.js 24.18.0 from the official `node-v24.18.0-win-x64.zi
 python tools/package_server.py --root "C:/Users/bongi/RecToon 2026" --out ../../outputs/server-packages --version 2026.10.16 --packs core --node node-runtime/node.exe --node-license node-runtime/LICENSE
 ```
 
+## Server settings (add-ons)
+
+The **Server settings** button on the server page opens `ServerSettingsDialog.cs` for the
+configured server folder. `ServerAddons.cs` lists what that server has and switches it without
+deleting anything:
+
+| Add-on | Off means | Takes effect |
+| --- | --- | --- |
+| Clothing library | `"enabled": false` in `data/downloadable-clothing.json` (only that value is rewritten) | immediately; the server re-reads the manifest on each clothing request |
+| Each community room | `data/ugc/<Room>` moved to `data/ugc-disabled/<Room>` | next server start (the launcher offers to restart); rooms keep their fixed `LocalRoomId` |
+| Archived asset catalog | `cdn/archive` renamed to `cdn/archive-disabled` | immediately; the CDN route checks files per request |
+
+Packs the server does not have (for example the clothing library on a server set up without it)
+are offered as **Install …**. They are downloaded from the release (resuming, SHA-256 checked),
+extracted through `<server root>\.addon-install` with every file verified, and merged in; an
+existing file of a different size stops the merge. Free space and the 260-character path limit
+are checked first. With clothing turned off, store entries that point at archived clothing still
+appear but have nothing to load.
+
+Harness checks: `obj\SetupHarness.exe addons-detect <server>`, `addons-apply <server> clothing=off room:Showdown=off archive=off`,
+`addons-install <server> archive` (uses a verified ZIP already in the download folder) and `render-server-settings <server>`.
+
 ## Build
 
 Run `powershell -ExecutionPolicy Bypass -File .\build.ps1`. This uses the Windows

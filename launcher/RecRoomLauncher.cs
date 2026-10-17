@@ -1152,6 +1152,7 @@ namespace RecRoomLauncher
         private readonly PillButton _startServer = PillButton.Tinted("Start server", Glyph.Play, Theme.GreenTint, Theme.GreenTintHover, Theme.Green);
         private readonly PillButton _stopServer = PillButton.Tinted("Stop server", Glyph.Stop, Theme.RedTint, Theme.RedTintHover, Theme.Red);
         private readonly PillButton _refresh = PillButton.Outlined("Refresh", Glyph.Refresh);
+        private readonly PillButton _serverSettings = PillButton.Outlined("Server settings", Glyph.Gear);
         private readonly RichTextBox _activity = new RichTextBox();
 
         // Join panel
@@ -1330,7 +1331,7 @@ namespace RecRoomLauncher
             AddFact(facts, "Last checked", _factChecked, "—");
             Theme.Add(stack, facts);
 
-            var actions = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 8, 0, 0) };
+            var actions = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Anchor = AnchorStyles.Left | AnchorStyles.Right, Margin = new Padding(0, 8, 0, 0) };
             _startServer.Visible = false;
             _startServer.Click += async (s, e) => await RunBusy(_startServer, "Starting…", StartLocalServer);
             _stopServer.Visible = false;
@@ -1339,6 +1340,9 @@ namespace RecRoomLauncher
             actions.Controls.Add(_startServer);
             actions.Controls.Add(_stopServer);
             actions.Controls.Add(_refresh);
+            _serverSettings.Margin = new Padding(0, 0, 10, 0);
+            _serverSettings.Click += async (s, e) => await EditServerSettings();
+            actions.Controls.Add(_serverSettings);
             Theme.Add(stack, actions);
 
             Theme.Add(stack, Theme.Caption("Activity", new Padding(0, 26, 0, 10)));
@@ -1725,6 +1729,45 @@ namespace RecRoomLauncher
                 File.WriteAllText(_settingsPath, new JavaScriptSerializer().Serialize(settings), new UTF8Encoding(false));
             }
             catch (Exception ex) { Log("Could not save launcher preferences: " + ex.Message); }
+        }
+
+        // ---------- Server settings (add-ons) ----------
+
+        private async Task EditServerSettings()
+        {
+            if (_busy) return;
+            var serverDir = (_serverDirectory ?? "").Trim().TrimEnd('\\', '/');
+            var problem = ServerSetup.ValidateServerFolder(serverDir);
+            if (problem != null)
+            {
+                ShowError("Server settings need an installed server. " + problem + " Choose your server folder in Settings, or install one with Settings → Run setup again.");
+                return;
+            }
+            bool saved, restart;
+            using (var dim = new Form {
+                FormBorderStyle = FormBorderStyle.None, ShowInTaskbar = false, StartPosition = FormStartPosition.Manual,
+                BackColor = Theme.Deep, Opacity = 0.45, Bounds = Bounds
+            })
+            using (var dialog = new ServerSettingsDialog(serverDir, Log))
+            {
+                Theme.UseRoundCorners(dim);
+                dim.Show(this);
+                saved = dialog.ShowDialog(dim) == DialogResult.OK;
+                restart = dialog.RestartNeeded;
+                dim.Close();
+            }
+            if (!saved) return;
+            Log("Server settings saved.");
+            if (!restart) return;
+            if (_localState != ServerState.Online)
+            {
+                Log("Room changes apply the next time the server starts.");
+                return;
+            }
+            var answer = MessageBox.Show(this, "Room changes apply when the server restarts. Restart the server now?\n\nPlayers on it will be disconnected.",
+                "Restart server", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (answer != DialogResult.Yes) { Log("Restart the server later to apply the room changes."); return; }
+            await RunBusy(_serverSettings, "Restarting…", async () => { await StopLocalServer(); await StartLocalServer(); });
         }
 
         // ---------- Server status ----------

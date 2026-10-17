@@ -616,6 +616,12 @@ namespace RecRoomLauncher
             return finalServer;
         }
 
+        // Used by the server settings panel to add packs to an existing server.
+        public static long ExtractVerifiedInto(ServerPackage package, string staging, long done, long total, IProgress<InstallProgress> progress, CancellationToken cancel)
+        {
+            return ExtractVerified(package, staging, done, total, progress, cancel);
+        }
+
         private static long ExtractVerified(ServerPackage package, string staging, long done, long total, IProgress<InstallProgress> progress, CancellationToken cancel)
         {
             var expected = package.Files.ToDictionary(f => f.Path, StringComparer.OrdinalIgnoreCase);

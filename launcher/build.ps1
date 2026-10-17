@@ -3,6 +3,8 @@ $ErrorActionPreference = 'Stop'
 $source = Join-Path $PSScriptRoot 'RecRoomLauncher.cs'
 $installer = Join-Path $PSScriptRoot 'Installer.cs'
 $setupView = Join-Path $PSScriptRoot 'SetupView.cs'
+$serverAddons = Join-Path $PSScriptRoot 'ServerAddons.cs'
+$serverSettings = Join-Path $PSScriptRoot 'ServerSettingsDialog.cs'
 $probe = Join-Path $PSScriptRoot 'probe-server.js'
 $cdnProbe = Join-Path $PSScriptRoot 'probe-cdn.js'
 $hostsHelper = Join-Path $PSScriptRoot 'LocalCdnHosts.cs'
@@ -61,6 +63,6 @@ if (Test-Path -LiteralPath $fonts) {
     /reference:System.Web.Extensions.dll /reference:System.Xml.dll `
     /reference:System.ServiceProcess.dll /reference:System.IO.Compression.dll `
     /reference:System.IO.Compression.FileSystem.dll `
-    $source $installer $setupView $hostsHelper
+    $source $installer $setupView $hostsHelper $serverAddons $serverSettings
 if ($LASTEXITCODE -ne 0) { throw "Launcher build failed with exit code $LASTEXITCODE" }
 Write-Host "Built $output"
