@@ -23,6 +23,10 @@ namespace RecRoomLauncher
                 if (args.Length == 2 && args[0] == "render-main") return RenderMain(args[1]);
                 if (args.Length == 3 && args[0] == "pipeline") return Pipeline(args[1], args[2]);
                 if (args.Length == 1 && args[0] == "release-download") return ReleaseDownload();
+                if (args.Length == 2 && args[0] == "addons-detect") return AddonsDetect(args[1]);
+                if (args.Length >= 3 && args[0] == "addons-apply") return AddonsApply(args[1], args.Skip(2).ToArray());
+                if (args.Length == 2 && args[0] == "render-server-settings") return RenderServerSettings(args[1]);
+                if (args.Length >= 3 && args[0] == "addons-install") return AddonsInstall(args[1], args.Skip(2).ToArray());
                 if (args.Length >= 3 && args[0] == "server-install") return ServerInstall(args[1], args[2], args.Skip(3).ToArray());
                 Console.WriteLine("usage: render <dir> | pipeline <source> <dest>");
                 return 2;
@@ -153,6 +157,37 @@ namespace RecRoomLauncher
             Ini.SetValues(Path.Combine(dest, "2026patch.ini"), "Network", new System.Collections.Generic.Dictionary<string, string> { { "ServerUrl", "https://example.test:10443" } });
             PatchPackage.Install(dest, m => Console.WriteLine("log: " + m));
             Console.WriteLine("ServerUrl after re-patch: " + Ini.ReadSection(Path.Combine(dest, "2026patch.ini"), "Network")["ServerUrl"]);
+
+            // Referee layout: original kept as the alias, community files in place, build still verifies.
+            Console.WriteLine("layout: " + PatchLayout.Detect(dest) + "; RefereeOriginal.dll is original: " +
+                GameFiles.Sha256(Path.Combine(dest, PatchLayout.OriginalAlias)).Equals(ClientBuild.ModuleFingerprints.First(m => m.Key == "Referee.dll").Value, StringComparison.OrdinalIgnoreCase) +
+                "; Referee.dll is community: " + (new FileInfo(Path.Combine(dest, "Referee.dll")).Length == 171008));
+            string incomplete;
+            Console.WriteLine("LooksComplete after patch: " + GameFiles.LooksComplete(dest, out incomplete) + (incomplete != null ? " (" + incomplete + ")" : ""));
+            started = DateTime.UtcNow;
+            failed = GameFiles.Verify(dest, progress, CancellationToken.None);
+            Console.WriteLine("full verify after patch: " + failed.Count + " failures (" + (DateTime.UtcNow - started).TotalSeconds.ToString("0") + "s)");
+            if (failed.Count > 0) return 1;
+
+            // A folder that still has the old injector overlay is converted; the overlay goes to a backup.
+            foreach (var name in PatchLayout.LegacyFiles) File.WriteAllText(Path.Combine(dest, name), "legacy " + name);
+            PatchPackage.Install(dest, m => Console.WriteLine("log: " + m));
+            Console.WriteLine("legacy files left: " + String.Join(",", PatchLayout.LegacyFiles.Where(n => File.Exists(Path.Combine(dest, n)))) + "|; preflight: " + PatchPackage.RunPreflight(dest));
+
+            // A failure part-way through puts everything back.
+            var mini = dest + "-rollback";
+            Directory.CreateDirectory(mini);
+            File.Copy(Path.Combine(dest, "RecRoom.exe"), Path.Combine(mini, "RecRoom.exe"));
+            File.Copy(Path.Combine(dest, PatchLayout.OriginalAlias), Path.Combine(mini, "Referee.dll"));
+            File.WriteAllText(Path.Combine(mini, "Injector.exe"), "legacy");
+            Directory.CreateDirectory(Path.Combine(mini, "CommunityPatchCore.dll.new"));   // blocks writing the core
+            try { PatchPackage.Install(mini, m => Console.WriteLine("log: " + m)); Console.WriteLine("ROLLBACK TEST FAILED: install succeeded"); return 1; }
+            catch (Exception ex) { Console.WriteLine("forced failure: " + ex.GetType().Name); }
+            var leftovers = Directory.GetFiles(mini).Select(Path.GetFileName).OrderBy(n => n).ToArray();
+            var restored = GameFiles.Sha256(Path.Combine(mini, "Referee.dll")).Equals(ClientBuild.ModuleFingerprints.First(m => m.Key == "Referee.dll").Value, StringComparison.OrdinalIgnoreCase);
+            Console.WriteLine("after rollback: " + String.Join(",", leftovers) + "; original Referee.dll back: " + restored);
+            if (!restored || leftovers.Length != 3) return 1;
+            Directory.Delete(mini, true);
             Console.WriteLine("PIPELINE OK");
             return 0;
         }
@@ -197,6 +232,65 @@ namespace RecRoomLauncher
             Console.WriteLine("package " + package.Id + " " + package.Version + " files " + package.Files.Count);
             ServerRelease.DeleteDownloads();
             Console.WriteLine("cleaned: " + !Directory.Exists(ServerRelease.DownloadFolder));
+            return 0;
+        }
+
+        private static int AddonsDetect(string serverDir)
+        {
+            foreach (var a in ServerAddons.Detect(serverDir))
+                Console.WriteLine(a.Kind + "  " + a.Id + "  enabled=" + a.Enabled + "  restart=" + a.NeedsRestart + "  | " + a.Title + " :: " + a.Detail);
+            return 0;
+        }
+
+        // addons-apply <serverDir> <id=on> ...  e.g. clothing=off room:Showdown=off archive=off
+        private static int AddonsApply(string serverDir, string[] pairs)
+        {
+            var addons = ServerAddons.Detect(serverDir);
+            var wanted = new System.Collections.Generic.Dictionary<string, bool>();
+            foreach (var p in pairs) { var kv = p.Split('='); wanted[kv[0]] = kv[1] == "on"; }
+            foreach (var m in ServerAddons.Apply(serverDir, addons, wanted)) Console.WriteLine("  " + m);
+            Console.WriteLine("after:");
+            foreach (var a in ServerAddons.Detect(serverDir)) Console.WriteLine("  " + a.Id + " enabled=" + a.Enabled);
+            return 0;
+        }
+
+        // addons-install <serverDir> <groupId> ...  Installs published add-ons into an existing server.
+        // Packages already in ServerRelease.DownloadFolder with the right checksum are used without downloading.
+        private static int AddonsInstall(string serverDir, string[] groupIds)
+        {
+            Console.WriteLine("download folder: " + ServerRelease.DownloadFolder);
+            var groups = ServerAddons.Detect(serverDir).Where(a => a.Kind == AddonKind.Missing && groupIds.Contains(a.Download.Id)).Select(a => a.Download).ToList();
+            if (groups.Count != groupIds.Length) { Console.WriteLine("FAILED: not all groups are offered as missing"); return 1; }
+            var last = DateTime.MinValue;
+            var progress = new SyncProgress(p => {
+                if ((DateTime.UtcNow - last).TotalSeconds < 5 && p.Done < p.Total) return;
+                last = DateTime.UtcNow;
+                Console.WriteLine("  " + p.Stage + " " + (int)(p.Fraction * 100) + "% " + p.Detail);
+            });
+            ServerAddons.Install(serverDir, groups, progress, CancellationToken.None);
+            Console.WriteLine("after:");
+            foreach (var a in ServerAddons.Detect(serverDir)) Console.WriteLine("  " + a.Kind + " " + a.Id + " enabled=" + a.Enabled);
+            Console.WriteLine("downloads cleaned: " + !Directory.Exists(ServerRelease.DownloadFolder));
+            return 0;
+        }
+
+        private static int RenderServerSettings(string serverDir)
+        {
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            using (var dialog = new ServerSettingsDialog(serverDir, m => Console.WriteLine("log: " + m)))
+            {
+                dialog.StartPosition = FormStartPosition.Manual;
+                dialog.Location = new System.Drawing.Point(-4000, -4000);
+                dialog.Show();
+                Application.DoEvents();
+                using (var bmp = new Bitmap(dialog.Width, dialog.Height))
+                {
+                    dialog.DrawToBitmap(bmp, new Rectangle(Point.Empty, dialog.Size));
+                    bmp.Save(System.IO.Path.Combine("obj", "renders", "server-settings.png"), ImageFormat.Png);
+                }
+                Console.WriteLine("rendered server-settings.png");
+            }
             return 0;
         }
 

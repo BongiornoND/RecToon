@@ -2,3 +2,4 @@
 launcher/patch/** -text
 launcher/assets/*.manifest -text
 launcher/server-packages.json -text
+launcher/referee/** -text
