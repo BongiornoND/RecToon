@@ -107,7 +107,16 @@ namespace RecRoomLauncher
     {
         private const int BufferSize = 1 << 20;
 
-        public static string FullPath(string root, BuildFile file) { return Path.Combine(root, file.Path); }
+        // In a Referee-patched folder the build's original Referee.dll lives on as RefereeOriginal.dll.
+        public static string FullPath(string root, BuildFile file)
+        {
+            if (file.Path.Equals("Referee.dll", StringComparison.OrdinalIgnoreCase))
+            {
+                var alias = Path.Combine(root, PatchLayout.OriginalAlias);
+                if (File.Exists(alias)) return alias;
+            }
+            return Path.Combine(root, file.Path);
+        }
 
         // Cheap startup check: every listed file exists with the right size.
         public static bool LooksComplete(string root, out string problem)
@@ -216,9 +225,9 @@ namespace RecRoomLauncher
         {
             foreach (var module in ClientBuild.ModuleFingerprints)
             {
-                var path = Path.Combine(root, module.Key);
+                var path = FullPath(root, new BuildFile(module.Key, 0, null));
                 if (!File.Exists(path) || !Sha256(path).Equals(module.Value, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException(module.Key + " is not the Rec Room " + ClientBuild.Version + " file the patch requires.");
+                    throw new InvalidOperationException(Path.GetFileName(path) + " is not the Rec Room " + ClientBuild.Version + " file the patch requires.");
             }
         }
     }
@@ -323,16 +332,47 @@ namespace RecRoomLauncher
         }
     }
 
-    // ---------- Patch payload ----------
+    // ---------- Patch layouts ----------
 
+    // Referee: the community Referee.dll is loaded by the game itself (no injector). The original
+    //   Referee.dll is kept byte-identical as RefereeOriginal.dll, which the community DLL still needs.
+    // Legacy: the older injector overlay (2026patch.dll + Injector.exe + RecRoomScreen.bat). Setup no
+    //   longer installs it, but folders patched that way keep working until setup is run again.
+    internal enum PatchMode { None, Referee, Legacy }
+
+    internal static class PatchLayout
+    {
+        public const string OriginalAlias = "RefereeOriginal.dll";
+        public const string LegacyLabel = "2026patch (injector, Oct 15 build)";
+        public static readonly string[] LegacyFiles = { "2026patch.dll", "Injector.exe", "RecRoomScreen.bat", "RecRoomVR.bat" };
+
+        public static PatchMode Detect(string gameDirectory)
+        {
+            var dir = (gameDirectory ?? "").Trim();
+            if (dir.Length == 0 || !File.Exists(Path.Combine(dir, "RecRoom.exe"))) return PatchMode.None;
+            if (PatchPackage.FileNames.All(n => File.Exists(Path.Combine(dir, n))) && File.Exists(Path.Combine(dir, OriginalAlias))) return PatchMode.Referee;
+            if (File.Exists(Path.Combine(dir, "2026patch.dll")) && File.Exists(Path.Combine(dir, "Injector.exe")) && File.Exists(Path.Combine(dir, "RecRoomScreen.bat"))) return PatchMode.Legacy;
+            return PatchMode.None;
+        }
+
+        public static string Label(PatchMode mode)
+        {
+            return mode == PatchMode.Referee ? PatchPackage.Label : mode == PatchMode.Legacy ? LegacyLabel : "not patched";
+        }
+    }
+
+    // The Referee forwarding patch (work/referee-proxy, see outputs/Referee-Phase-Handoff.md).
     internal static class PatchPackage
     {
-        public const string Label = "2026patch (Oct 15 build, hidden-console launch scripts Oct 16)";
-        public static readonly string[] FileNames = { "2026patch.dll", "Injector.exe", "2026patch.ini", "RecRoomScreen.bat", "RecRoomVR.bat" };
+        public const string Label = "Community Referee (forwarding build, Oct 17)";
+        // Written beside RecRoom.exe; 2026patch.ini is the runtime configuration CommunityPatchCore reads.
+        public static readonly string[] FileNames = { "Referee.dll", "RefereeBootstrap.dll", "CommunityPatchCore.dll", "2026patch.ini" };
+        // Arguments the launcher starts RecRoom.exe with (same mode RecRoomScreen.bat selected).
+        public const string LaunchArguments = "+forcemode:screen";
 
         private static Stream Open(string name)
         {
-            var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("RecRoomLauncher.patch." + name);
+            var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("RecRoomLauncher.referee." + name);
             if (stream == null) throw new InvalidOperationException(name + " is missing from the launcher's patch package.");
             return stream;
         }
@@ -353,13 +393,10 @@ namespace RecRoomLauncher
             return hashes;
         }
 
-        // Writes the five patch files beside RecRoom.exe. Existing connection settings in
-        // 2026patch.ini are kept; replaced files are backed up first.
-        public static void Install(string gameDirectory, Action<string> log)
+        private static Dictionary<string, byte[]> LoadPayload()
         {
             var hashes = ExpectedHashes();
-            var backup = Path.Combine(InstallPaths.DataDirectory, "backups", "patch-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss"));
-            Dictionary<string, string> keptNetwork = null;
+            var payload = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
             foreach (var name in FileNames)
             {
                 byte[] data;
@@ -373,41 +410,105 @@ namespace RecRoomLauncher
                 using (var sha = SHA256.Create())
                     if (!hashes.TryGetValue(name, out expected) || !GameFiles.Hex(sha.ComputeHash(data)).Equals(expected, StringComparison.OrdinalIgnoreCase))
                         throw new InvalidOperationException("The launcher's copy of " + name + " failed its integrity check.");
-                var target = Path.Combine(gameDirectory, name);
-                if (File.Exists(target))
-                {
-                    Directory.CreateDirectory(backup);
-                    File.Copy(target, Path.Combine(backup, name), true);
-                    if (name == "2026patch.ini") keptNetwork = Ini.ReadSection(target, "Network");
-                }
-                var temporary = target + ".new";
-                File.WriteAllBytes(temporary, data);
-                if (File.Exists(target)) File.Delete(target);
-                File.Move(temporary, target);
+                payload[name] = data;
             }
-            if (keptNetwork != null && keptNetwork.Count > 0)
+            return payload;
+        }
+
+        private static string OriginalRefereeHash { get { return ClientBuild.ModuleFingerprints.First(m => m.Key == "Referee.dll").Value; } }
+
+        // Installs the Referee layout beside RecRoom.exe:
+        //   Referee.dll (original) -> RefereeOriginal.dll, then the community files are written.
+        // Old injector files are moved to a backup. Existing connection settings in 2026patch.ini are kept.
+        // Every step is undone if a later one fails, so the folder is never left half-patched.
+        public static void Install(string gameDirectory, Action<string> log)
+        {
+            var payload = LoadPayload();
+            var referee = Path.Combine(gameDirectory, "Referee.dll");
+            var alias = Path.Combine(gameDirectory, PatchLayout.OriginalAlias);
+            if (File.Exists(alias))
             {
-                Ini.SetValues(Path.Combine(gameDirectory, "2026patch.ini"), "Network", keptNetwork);
-                log("Kept your existing connection settings in 2026patch.ini.");
+                if (!GameFiles.Sha256(alias).Equals(OriginalRefereeHash, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(PatchLayout.OriginalAlias + " in the game folder is not Rec Room's original Referee.dll. Reinstall the game into a new folder.");
+            }
+            else if (!File.Exists(referee) || !GameFiles.Sha256(referee).Equals(OriginalRefereeHash, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Referee.dll in the game folder is not the original Rec Room " + ClientBuild.Version + " file, so it cannot be kept as " + PatchLayout.OriginalAlias + ".");
+
+            var backup = Path.Combine(InstallPaths.DataDirectory, "backups", "patch-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss"));
+            var undo = new Stack<Action>();
+            try
+            {
+                // Old injector overlay: the core refuses to run beside it.
+                foreach (var name in PatchLayout.LegacyFiles)
+                {
+                    var path = Path.Combine(gameDirectory, name);
+                    if (!File.Exists(path)) continue;
+                    Directory.CreateDirectory(backup);
+                    var saved = Path.Combine(backup, name);
+                    File.Move(path, saved);
+                    undo.Push(() => File.Move(saved, path));
+                    log("Moved the old injector file " + name + " to " + backup + ".");
+                }
+
+                if (!File.Exists(alias))
+                {
+                    File.Move(referee, alias);
+                    undo.Push(() => { if (File.Exists(referee)) File.Delete(referee); File.Move(alias, referee); });
+                }
+
+                Dictionary<string, string> keptNetwork = null;
+                foreach (var name in FileNames)
+                {
+                    var target = Path.Combine(gameDirectory, name);
+                    if (File.Exists(target))
+                    {
+                        Directory.CreateDirectory(backup);
+                        var saved = Path.Combine(backup, name);
+                        File.Copy(target, saved, true);
+                        if (name == "2026patch.ini") keptNetwork = Ini.ReadSection(target, "Network");
+                        undo.Push(() => File.Copy(saved, target, true));
+                    }
+                    else undo.Push(() => { if (File.Exists(target)) File.Delete(target); });
+                    var temporary = target + ".new";
+                    File.WriteAllBytes(temporary, payload[name]);
+                    if (File.Exists(target)) File.Delete(target);
+                    File.Move(temporary, target);
+                }
+                if (keptNetwork != null && keptNetwork.Count > 0)
+                {
+                    Ini.SetValues(Path.Combine(gameDirectory, "2026patch.ini"), "Network", keptNetwork);
+                    log("Kept your existing connection settings in 2026patch.ini.");
+                }
+            }
+            catch (Exception)
+            {
+                while (undo.Count > 0)
+                {
+                    try { undo.Pop()(); } catch (Exception ex) { log("Could not undo a patch step: " + ex.Message); }
+                }
+                throw;
             }
         }
 
-        // The patch's own read-only preflight: DLL present, INI valid, client fingerprints match.
+        // Read-only check of an installed Referee layout. Nothing is executed: loading the community
+        // Referee.dll would also run the original's protected startup, so it is only checked by hash.
         public static string RunPreflight(string gameDirectory)
         {
-            var start = new ProcessStartInfo(Path.Combine(gameDirectory, "Injector.exe"), "--check-install") {
-                WorkingDirectory = gameDirectory, UseShellExecute = false, CreateNoWindow = true,
-                RedirectStandardOutput = true, RedirectStandardError = true
-            };
-            using (var process = Process.Start(start))
+            var hashes = ExpectedHashes();
+            foreach (var name in FileNames.Where(n => n != "2026patch.ini"))
             {
-                var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
-                if (!process.WaitForExit(120000)) { try { process.Kill(); } catch (Exception) { } throw new InvalidOperationException("The patch preflight check did not finish."); }
-                var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-                var last = lines.Length > 0 ? lines[lines.Length - 1].Trim() : "";
-                if (process.ExitCode != 0) throw new InvalidOperationException("The patch preflight check failed: " + last);
-                return last;
+                var path = Path.Combine(gameDirectory, name);
+                if (!File.Exists(path) || !GameFiles.Sha256(path).Equals(hashes[name], StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(name + " in the game folder is missing or is not the launcher's version.");
             }
+            GameFiles.CheckFingerprints(gameDirectory);
+            foreach (var name in PatchLayout.LegacyFiles.Take(2))
+                if (File.Exists(Path.Combine(gameDirectory, name)))
+                    throw new InvalidOperationException("The old injector file " + name + " is still in the game folder; the community patch will not start beside it.");
+            var ini = Path.Combine(gameDirectory, "2026patch.ini");
+            if (!File.Exists(ini) || !File.ReadAllLines(ini).Any(l => l.Trim().Equals("[Network]", StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException("2026patch.ini is missing or has no [Network] section.");
+            return "Community Referee files, the original Referee (kept as " + PatchLayout.OriginalAlias + ") and game fingerprints verified";
         }
     }
 
@@ -950,6 +1051,7 @@ namespace RecRoomLauncher
         public string ManifestId { get; set; }
         public string Status { get; set; }
         public string Patch { get; set; }
+        public string Mode { get; set; }   // "referee" or "legacy"; missing in records from before the Referee patch
         public string Source { get; set; }
     }
 
@@ -995,19 +1097,22 @@ namespace RecRoomLauncher
 
         public static InstallState ForExistingGame(string gamePath, string source)
         {
+            var mode = PatchLayout.Detect(gamePath);
             return new InstallState {
-                Game = new GameState { Path = gamePath, Build = ClientBuild.Version, ManifestId = ClientBuild.ManifestId, Status = "ready", Patch = PatchPackage.Label, Source = source },
+                Game = new GameState {
+                    Path = gamePath, Build = ClientBuild.Version, ManifestId = ClientBuild.ManifestId, Status = "ready",
+                    Patch = PatchLayout.Label(mode), Mode = mode.ToString().ToLowerInvariant(), Source = source
+                },
                 Server = new ServerStateRecord { Choice = "undecided", Status = "notInstalled" }
             };
         }
 
-        // An existing, already patched installation (e.g. from before this setup existed).
+        // An existing, already patched installation (either layout, e.g. from before this setup existed).
         public static bool IsPatchedGame(string gamePath)
         {
-            if (String.IsNullOrWhiteSpace(gamePath)) return false;
+            if (String.IsNullOrWhiteSpace(gamePath) || PatchLayout.Detect(gamePath) == PatchMode.None) return false;
             string ignored;
-            return File.Exists(Path.Combine(gamePath, "2026patch.dll")) && File.Exists(Path.Combine(gamePath, "Injector.exe")) &&
-                   File.Exists(Path.Combine(gamePath, "RecRoomScreen.bat")) && GameFiles.LooksComplete(gamePath, out ignored);
+            return GameFiles.LooksComplete(gamePath, out ignored);
         }
     }
 }

@@ -12,7 +12,7 @@ $manifest = Join-Path $PSScriptRoot 'app.manifest'
 $assets = Join-Path $PSScriptRoot 'assets'
 $icon = Join-Path $assets 'launcher.ico'
 $buildManifest = Join-Path $assets 'build-20260323.14.manifest'
-$patch = Join-Path $PSScriptRoot 'patch'
+$referee = Join-Path $PSScriptRoot 'referee'
 $output = Join-Path (Split-Path $PSScriptRoot -Parent) 'dist\RecToon-Launcher.exe'
 if ($OutFile) { $output = $OutFile }
 $output = [IO.Path]::GetFullPath($output)
@@ -25,14 +25,15 @@ $PackageIndex = [IO.Path]::GetFullPath($PackageIndex)
 if (!(Test-Path -LiteralPath $PackageIndex)) { throw "Missing server package index: $PackageIndex" }
 New-Item -ItemType Directory -Force -Path (Split-Path $output -Parent) | Out-Null
 
-# The pinned patch payload (exactly the five distribution files) plus their SHA-256 list,
-# which setup checks before writing anything into a game folder.
-$patchFiles = '2026patch.dll', 'Injector.exe', '2026patch.ini', 'RecRoomScreen.bat', 'RecRoomVR.bat'
+# The Referee patch payload (community Referee.dll, its bootstrap, the private patch core and the
+# 2026patch.ini template) plus their SHA-256 list, which setup checks before writing anything into
+# a game folder. See referee/README.md for where the DLLs come from.
+$patchFiles = 'Referee.dll', 'RefereeBootstrap.dll', 'CommunityPatchCore.dll', '2026patch.ini'
 $obj = Join-Path $PSScriptRoot 'obj'
 New-Item -ItemType Directory -Force -Path $obj | Out-Null
-$sums = Join-Path $obj 'SHA256SUMS'
+$sums = Join-Path $obj 'referee.SHA256SUMS'
 $lines = foreach ($name in $patchFiles) {
-    $file = Join-Path $patch $name
+    $file = Join-Path $referee $name
     if (!(Test-Path -LiteralPath $file)) { throw "Missing patch payload file: $file" }
     '{0} *{1}' -f (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant(), $name
 }
@@ -42,10 +43,10 @@ $resources = @(
     "/resource:$probe,RecRoomLauncher.probe-server.js",
     "/resource:$cdnProbe,RecRoomLauncher.probe-cdn.js",
     "/resource:$buildManifest,RecRoomLauncher.build-20260323.14.manifest",
-    "/resource:$sums,RecRoomLauncher.patch.SHA256SUMS",
+    "/resource:$sums,RecRoomLauncher.referee.SHA256SUMS",
     "/resource:$PackageIndex,RecRoomLauncher.server-packages.json"
 )
-foreach ($name in $patchFiles) { $resources += "/resource:$(Join-Path $patch $name),RecRoomLauncher.patch.$name" }
+foreach ($name in $patchFiles) { $resources += "/resource:$(Join-Path $referee $name),RecRoomLauncher.referee.$name" }
 foreach ($name in 'banner.jpg', 'logo-full.png', 'logo-squircle.png', 'launcher.ico') {
     $resources += "/resource:$(Join-Path $assets $name),RecRoomLauncher.$name"
 }

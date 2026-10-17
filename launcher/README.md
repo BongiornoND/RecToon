@@ -33,7 +33,7 @@ requires network reachability, DNS/domain and TLS configuration, firewall/router
 access, and compatible Tachyon/voice settings. The local one-machine check alone
 does not prove those external requirements.
 
-## First-run setup (v6)
+## First-run setup (v7: Referee patch)
 
 On a fresh open (no `install-state.json` under `%LOCALAPPDATA%\RecRoomCommunityLauncher`
 and no working patched game folder) the launcher shows **Setup** in place of the two
@@ -47,31 +47,53 @@ cards:
      downloads the pinned build. The launcher watches Steam's depot folder and never
      handles Steam credentials.
    - *Use game files I already have*: copy a complete unmodified folder.
-   - *I already have a patched copy*: check and re-patch a folder in place.
+   - *I already have a patched copy*: check and re-patch a folder in place (refused under
+     `steamapps\common`, where Steam would restore the renamed `Referee.dll`).
 2. **Install and patch** — every one of the 3,298 files is checked against Steam's
-   manifest for 20260323.14 (embedded as `assetsuild-20260323.14.manifest`), files are
+   manifest for 20260323.14 (embedded as `assets\build-20260323.14.manifest`), files are
    copied through a staging folder (or Steam's fresh download is moved on the same
-   drive), the embedded patch (`patch\`, SHA-256 checked) is written, the three module
-   fingerprints are checked and `Injector.exe --check-install` must pass. If the
+   drive), then the **Referee patch** is installed (`outputs/Referee-Phase-Handoff.md`):
+   - the game's original `Referee.dll` (SHA-256 checked) is renamed `RefereeOriginal.dll`;
+   - the community `Referee.dll`, `RefereeBootstrap.dll`, `CommunityPatchCore.dll` and the
+     `2026patch.ini` template are written from `referee\` (SHA-256 checked);
+   - an older injector overlay (`2026patch.dll`, `Injector.exe`, `RecRoomScreen.bat`,
+     `RecRoomVR.bat`) is moved to `%LOCALAPPDATA%\RecRoomCommunityLauncher\backups\patch-*`,
+     and existing `[Network]` settings in `2026patch.ini` are kept;
+   - if any step fails, the earlier steps are undone.
+
+   The check step then re-hashes the community files, the original alias, GameAssembly and
+   UnityPlayer, and confirms no injector files remain. Nothing is executed for this check:
+   loading the community `Referee.dll` would run the original's protected startup. If the
    `RefereeClientApp` service is missing, setup offers to run
    `RefereeClientInstaller.exe -install` (what Steam's install script does; needs UAC).
 3. **Server** — install a server package (recommended), use an existing server folder,
    or skip. The page warns that **you cannot play without a server**; skipping asks for
    confirmation and is meant only for players who have another running server's address.
 
-Existing users are migrated silently: a working patched folder in settings is recorded
-as installed and setup is skipped. A missing game folder or unfinished setup shows Setup
-again (resuming at the server step when the game is already done). **Settings → Run setup
-again…** or `RecRoomCommunityLauncher-v6.exe --setup` opens it on demand.
+Existing users are migrated silently: a working patched folder in settings (either layout)
+is recorded as installed and setup is skipped. A missing game folder or unfinished setup
+shows Setup again (resuming at the server step when the game is already done).
+**Settings → Run setup again…** or `RecRoomCommunityLauncher-v7.exe --setup` opens it on
+demand; choosing *I already have a patched copy* on an injector-patched folder converts it.
 
-Patch payload: `2026patch.dll` (Oct 15 build, SHA-256 `caf7f23c…`), `Injector.exe`,
-hidden-console `RecRoomScreen.bat`/`RecRoomVR.bat` and the repository INI template with
-`RestoreArchivedBounceCollision=1` (the tested setting). Regenerate the build manifest with
-`python tools\make_build_manifest.py <depotcache manifest> assetsuild-20260323.14.manifest`.
+**Launching.** The launcher detects the folder's layout. A Referee folder is started as
+`RecRoom.exe +forcemode:screen` directly; Windows loads the community `Referee.dll`, so
+there is no injector or script. The first window can take a while to appear. A folder that
+still has the older injector patch keeps launching through its `RecRoomScreen.bat`, and the
+checklist suggests running setup again. The launcher no longer embeds or installs the
+injector; `outputs\RecRoomCommunityLauncher-v6.exe` is the last injector build.
 
-Tests: `objuild-harness.ps1` builds `tests\SetupHarness.cs`; `SetupHarness.exe
+The Referee patch still needs the original `Referee.dll` (as `RefereeOriginal.dll`) and is
+the forwarding prototype, not a standalone replacement; see `referee\README.md` for the
+exact payload hashes and the handoff for what has and has not been verified.
+
+Regenerate the build manifest with
+`python tools\make_build_manifest.py <depotcache manifest> assets\build-20260323.14.manifest`.
+
+Tests: `obj\build-harness.ps1` builds `tests\SetupHarness.cs`; `SetupHarness.exe
 render-main <dir>` renders the real window's setup pages, and `pipeline <game> <dest>` runs
-verify → copy → patch → fingerprints → preflight into a scratch folder.
+verify → copy → Referee patch → preflight → full re-verify through the alias → injector
+conversion → forced-failure rollback into a scratch folder.
 
 ## Server packages
 

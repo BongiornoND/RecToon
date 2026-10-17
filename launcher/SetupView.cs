@@ -385,7 +385,7 @@ namespace RecRoomLauncher
             Theme.Add(_folderChoice.Extra, FieldLabel("Folder with the game files (contains RecRoom.exe)"));
             Theme.Add(_folderChoice.Extra, FolderRow(_sourceFolder, "Select the folder containing Rec Room " + ClientBuild.Version, false));
             _existingChoice = new ChoiceTile(Glyph.Check, "I already have a patched copy",
-                "Keep an installation you already play with. Its files are checked and the bundled patch is applied in place; your connection settings are kept.");
+                "Keep an installation you already play with. Its files are checked and the bundled patch is applied in place; an older injector patch is replaced (its files are backed up) and your connection settings are kept.");
             Theme.Add(_existingChoice.Extra, FieldLabel("Patched Rec Room folder"));
             Theme.Add(_existingChoice.Extra, FolderRow(_existingFolder, "Select your Rec Room folder (contains RecRoom.exe)", false));
             ChoiceTile.Group(_steamChoice, _folderChoice, _existingChoice);
@@ -435,6 +435,12 @@ namespace RecRoomLauncher
             {
                 var folder = _existingFolder.Value;
                 if (!File.Exists(Path.Combine(folder, "RecRoom.exe"))) { _gameMessage.Text = "Choose the folder that contains RecRoom.exe."; return; }
+                // The patch renames Referee.dll; a Steam-managed install would have it restored on the next update or file check.
+                if (InstallPaths.Normalize(folder).IndexOf(@"\steamapps\common\", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    _gameMessage.Text = "Steam manages that folder and would undo the patch. Choose \"Use game files I already have\" to make a separate copy instead.";
+                    return;
+                }
                 _source = Source.Existing;
                 _gamePath = InstallPaths.Normalize(folder);
                 StartInstall(_gamePath);
@@ -694,10 +700,10 @@ namespace RecRoomLauncher
                 await Task.Run(() => PatchPackage.Install(game, message => _log(message)));
                 SetStep(2, Glyph.Check, "Installed " + PatchPackage.Label);
 
-                // 4. Check with the patch's own preflight.
+                // 4. Check the installed files (hashes only; nothing is run).
                 current = 3;
-                SetStep(3, Glyph.Refresh, "Running the patch's installation check…");
-                var preflight = await Task.Run(() => { GameFiles.CheckFingerprints(game); return PatchPackage.RunPreflight(game); });
+                SetStep(3, Glyph.Refresh, "Checking the patched game files…");
+                var preflight = await Task.Run(() => PatchPackage.RunPreflight(game));
                 SetStep(3, Glyph.Check, preflight.Length > 0 ? preflight : "Patch check passed");
 
                 // 5. Referee (Steam's install script normally does this).
@@ -725,7 +731,7 @@ namespace RecRoomLauncher
                 var state = InstallState.Load() ?? new InstallState();
                 state.Game = new GameState {
                     Path = game, Build = ClientBuild.Version, ManifestId = ClientBuild.ManifestId, Status = "ready",
-                    Patch = PatchPackage.Label, Source = _origin
+                    Patch = PatchPackage.Label, Mode = "referee", Source = _origin
                 };
                 if (state.Server == null) state.Server = new ServerStateRecord { Choice = "undecided", Status = "notInstalled" };
                 state.SetupComplete = false;

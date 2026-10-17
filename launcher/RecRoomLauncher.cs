@@ -1012,7 +1012,7 @@ namespace RecRoomLauncher
             header.Resize += (s, e) => close.Location = new Point(header.Width - close.Width - (int)Theme.S(18), (int)Theme.S(18));
             Controls.Add(header);
 
-            Theme.Add(body, FolderRow("Game folder", "(contains RecRoom.exe and RecRoomScreen.bat)", Game, game, current => browse("Select the folder containing RecRoom.exe and RecRoomScreen.bat", current)));
+            Theme.Add(body, FolderRow("Game folder", "(the patched folder that contains RecRoom.exe)", Game, game, current => browse("Select the patched Rec Room folder (contains RecRoom.exe)", current)));
             var serverRow = FolderRow("Server folder", "(contains server.js)", Server, server, current => browse("Select the folder containing server.js", current));
             serverRow.Margin = new Padding(0, 18, 0, 0);
             Theme.Add(body, serverRow);
@@ -1197,7 +1197,7 @@ namespace RecRoomLauncher
             SuspendLayout();
             AutoScaleDimensions = new SizeF(96F, 96F);
             AutoScaleMode = AutoScaleMode.Dpi;
-            Text = "Rec Room Community Launcher v6";
+            Text = "Rec Room Community Launcher v7";
             Icon = Assets.AppIcon() ?? Icon;
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = new Size(1052, 920);
@@ -1508,8 +1508,10 @@ namespace RecRoomLauncher
             var serverReady = _localState == ServerState.Online;
             SetCheck(0, serverReady ? Glyph.Check : Glyph.Cross, serverReady ? "Server is answering on localhost:10443" : "Server is not answering yet");
             var dir = (_clientDirectory ?? "").Trim();
-            var gameReady = File.Exists(Path.Combine(dir, "RecRoom.exe")) && File.Exists(Path.Combine(dir, "RecRoomScreen.bat"));
-            SetCheck(1, gameReady ? Glyph.Check : Glyph.Cross, gameReady ? "Patched game folder found" : "Game folder not found — choose it in Settings");
+            var mode = PatchLayout.Detect(dir);
+            if (mode == PatchMode.Referee) SetCheck(1, Glyph.Check, "Patched game folder found");
+            else if (mode == PatchMode.Legacy) SetCheck(1, Glyph.Alert, "Game uses the older injector patch — Settings → Run setup again switches it");
+            else SetCheck(1, Glyph.Cross, File.Exists(Path.Combine(dir, "RecRoom.exe")) ? "Game folder is not patched — Settings → Run setup again" : "Game folder not found — choose it in Settings");
             var steam = Process.GetProcessesByName("steam");
             var steamRunning = steam.Length > 0;
             foreach (var process in steam) process.Dispose();
@@ -1999,7 +2001,7 @@ namespace RecRoomLauncher
                 throw new InvalidOperationException("Your server stopped answering. " + status.Summary);
             await EnsureLocalCdn();
             SaveNetworkSettings(LocalOrigin, "localhost", "", "", LocalRoomServerKey());
-            if (LaunchGame()) Log("Launched RecRoomScreen.bat. Joining localhost:10443.");
+            if (LaunchGame()) Log("Joining localhost:10443.");
         }
 
         // The local server's room transport (Tachyon) keeps its RSA public key in
@@ -2098,7 +2100,7 @@ namespace RecRoomLauncher
             }
 
             SaveNetworkSettings(origin, domain, _voiceServer.Value, _voiceServerId.Value, _voiceKey.Value);
-            if (LaunchGame()) Log("Launched RecRoomScreen.bat. Joining " + uri.Authority + ".");
+            if (LaunchGame()) Log("Joining " + uri.Authority + ".");
         }
 
         // Address wins if it names a port; otherwise the Port option, otherwise RecToon's default 10443.
@@ -2174,9 +2176,8 @@ namespace RecRoomLauncher
         {
             var clientDir = (_clientDirectory ?? "").Trim();
             var ini = Path.Combine(clientDir, "2026patch.ini");
-            var batch = Path.Combine(clientDir, "RecRoomScreen.bat");
-            if (!File.Exists(Path.Combine(clientDir, "RecRoom.exe")) || !File.Exists(batch) || !File.Exists(Path.Combine(clientDir, "Injector.exe")))
-                throw new InvalidOperationException("Choose the patched Rec Room folder containing RecRoom.exe, Injector.exe, and RecRoomScreen.bat in Settings.");
+            if (PatchLayout.Detect(clientDir) == PatchMode.None)
+                throw new InvalidOperationException("The game folder is not patched. Choose your patched Rec Room folder in Settings, or patch it with Settings → Run setup again.");
             if (!File.Exists(ini)) throw new InvalidOperationException("2026patch.ini is missing from the selected game folder.");
             SetIniValues(ini, new Dictionary<string, string> {
                 { "ServerUrl", serverUrl }, { "ServerDomain", domain },
@@ -2210,9 +2211,16 @@ namespace RecRoomLauncher
                 return false;
             }
             var dir = _clientDirectory.Trim();
-            var batch = Path.Combine(dir, "RecRoomScreen.bat");
-            var start = new ProcessStartInfo(batch) { WorkingDirectory = dir, UseShellExecute = true, WindowStyle = ProcessWindowStyle.Normal };
-            Process.Start(start);
+            if (PatchLayout.Detect(dir) == PatchMode.Legacy)
+            {
+                // Older injector installs start through the patch's own script.
+                Process.Start(new ProcessStartInfo(Path.Combine(dir, "RecRoomScreen.bat")) { WorkingDirectory = dir, UseShellExecute = true, WindowStyle = ProcessWindowStyle.Normal });
+                Log("Started Rec Room with the older injector patch (RecRoomScreen.bat).");
+                return true;
+            }
+            // Referee layout: Windows loads the community Referee.dll with the game; no injector or script.
+            Process.Start(new ProcessStartInfo(Path.Combine(dir, "RecRoom.exe"), PatchPackage.LaunchArguments) { WorkingDirectory = dir, UseShellExecute = true, WindowStyle = ProcessWindowStyle.Normal });
+            Log("Started RecRoom.exe. The first window can take a while to appear.");
             return true;
         }
 

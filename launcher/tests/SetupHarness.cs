@@ -157,6 +157,37 @@ namespace RecRoomLauncher
             Ini.SetValues(Path.Combine(dest, "2026patch.ini"), "Network", new System.Collections.Generic.Dictionary<string, string> { { "ServerUrl", "https://example.test:10443" } });
             PatchPackage.Install(dest, m => Console.WriteLine("log: " + m));
             Console.WriteLine("ServerUrl after re-patch: " + Ini.ReadSection(Path.Combine(dest, "2026patch.ini"), "Network")["ServerUrl"]);
+
+            // Referee layout: original kept as the alias, community files in place, build still verifies.
+            Console.WriteLine("layout: " + PatchLayout.Detect(dest) + "; RefereeOriginal.dll is original: " +
+                GameFiles.Sha256(Path.Combine(dest, PatchLayout.OriginalAlias)).Equals(ClientBuild.ModuleFingerprints.First(m => m.Key == "Referee.dll").Value, StringComparison.OrdinalIgnoreCase) +
+                "; Referee.dll is community: " + (new FileInfo(Path.Combine(dest, "Referee.dll")).Length == 171008));
+            string incomplete;
+            Console.WriteLine("LooksComplete after patch: " + GameFiles.LooksComplete(dest, out incomplete) + (incomplete != null ? " (" + incomplete + ")" : ""));
+            started = DateTime.UtcNow;
+            failed = GameFiles.Verify(dest, progress, CancellationToken.None);
+            Console.WriteLine("full verify after patch: " + failed.Count + " failures (" + (DateTime.UtcNow - started).TotalSeconds.ToString("0") + "s)");
+            if (failed.Count > 0) return 1;
+
+            // A folder that still has the old injector overlay is converted; the overlay goes to a backup.
+            foreach (var name in PatchLayout.LegacyFiles) File.WriteAllText(Path.Combine(dest, name), "legacy " + name);
+            PatchPackage.Install(dest, m => Console.WriteLine("log: " + m));
+            Console.WriteLine("legacy files left: " + String.Join(",", PatchLayout.LegacyFiles.Where(n => File.Exists(Path.Combine(dest, n)))) + "|; preflight: " + PatchPackage.RunPreflight(dest));
+
+            // A failure part-way through puts everything back.
+            var mini = dest + "-rollback";
+            Directory.CreateDirectory(mini);
+            File.Copy(Path.Combine(dest, "RecRoom.exe"), Path.Combine(mini, "RecRoom.exe"));
+            File.Copy(Path.Combine(dest, PatchLayout.OriginalAlias), Path.Combine(mini, "Referee.dll"));
+            File.WriteAllText(Path.Combine(mini, "Injector.exe"), "legacy");
+            Directory.CreateDirectory(Path.Combine(mini, "CommunityPatchCore.dll.new"));   // blocks writing the core
+            try { PatchPackage.Install(mini, m => Console.WriteLine("log: " + m)); Console.WriteLine("ROLLBACK TEST FAILED: install succeeded"); return 1; }
+            catch (Exception ex) { Console.WriteLine("forced failure: " + ex.GetType().Name); }
+            var leftovers = Directory.GetFiles(mini).Select(Path.GetFileName).OrderBy(n => n).ToArray();
+            var restored = GameFiles.Sha256(Path.Combine(mini, "Referee.dll")).Equals(ClientBuild.ModuleFingerprints.First(m => m.Key == "Referee.dll").Value, StringComparison.OrdinalIgnoreCase);
+            Console.WriteLine("after rollback: " + String.Join(",", leftovers) + "; original Referee.dll back: " + restored);
+            if (!restored || leftovers.Length != 3) return 1;
+            Directory.Delete(mini, true);
             Console.WriteLine("PIPELINE OK");
             return 0;
         }
